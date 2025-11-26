@@ -46,7 +46,8 @@ enum BackendClient {
            let url = URL(string: configURL) {
             return url
         }
-        return URL(string: "http://localhost:8000")!
+        // Use Mac's local IP for testing on physical device
+        return URL(string: "http://10.20.99.164:8000")!
     }()
 
     static func search(imageData: Data) async throws -> [SearchResultItem] {
