@@ -24,7 +24,23 @@ from db import execute_sync
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Import hybrid metadata extractor (combines text + visual)
+try:
+    from hybrid_metadata_extractor import enhance_item_metadata_hybrid
+    VISUAL_AVAILABLE = True
+except ImportError:
+    from metadata_extractor import enhance_item_metadata
+    VISUAL_AVAILABLE = False
+    logger.warning("Visual metadata not available - using text-only extraction")
+
 ua = UserAgent()
+
+# CONFIGURATION: Set to True to use CLIP visual enhancement
+# Depop has minimal text data, so visual extraction is HIGHLY recommended
+USE_VISUAL_ENHANCEMENT = True  # Depop needs visual - minimal titles from URL slugs
+
+# Toggle visual enhancement (slower but more accurate, especially for color)
+USE_VISUAL_ENHANCEMENT = True  # Set to False for faster scraping without CLIP
 
 
 async def scrape_depop_working(search_term: str, max_items: int = 50) -> List[Dict[str, Any]]:
@@ -117,14 +133,31 @@ async def scrape_depop_working(search_term: str, max_items: int = 50) -> List[Di
                     
                     # Only save if we have minimum data (price and image)
                     if external_id and image_url:
-                        items.append({
+                        item = {
+                            'source': 'depop',
                             'external_id': external_id,
                             'title': title,
                             'price': price,
                             'url': full_url,
                             'image_url': image_url,
                             'description': None
-                        })
+                        }
+                        
+                        # Extract structured metadata (text + optional visual)
+                        # Depop ESPECIALLY benefits from visual - titles are just URL slugs
+                        if USE_VISUAL_ENHANCEMENT and VISUAL_AVAILABLE:
+                            item = enhance_item_metadata_hybrid(
+                                item,
+                                use_visual=True,
+                                visual_confidence=0.20,  # Lower threshold for Depop - we need the help!
+                                prefer_visual_for=['color', 'category', 'brand']  # Trust visual for everything except size
+                            )
+                        else:
+                            from metadata_extractor import enhance_item_metadata
+                            item = enhance_item_metadata(item)
+
+                        
+                        items.append(item)
                         
                         logger.debug(f"✓ [{idx+1}] {title[:40]}... - ${price}")
                 
@@ -143,24 +176,36 @@ async def scrape_depop_working(search_term: str, max_items: int = 50) -> List[Di
 
 
 def save_items(items: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Save to database."""
+    """Save to unified fashion_items table with structured metadata."""
     saved, failed = 0, 0
     
     for item in items:
         try:
             execute_sync(
                 """
-                INSERT INTO depop_items (external_id, title, description, price, url, image_url)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (external_id) DO UPDATE SET
+                INSERT INTO fashion_items (
+                    source, external_id, title, description, price, 
+                    url, image_url,
+                    brand, category, color, condition, size
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source, external_id) DO UPDATE SET
                     title = EXCLUDED.title,
                     price = EXCLUDED.price,
                     url = EXCLUDED.url,
                     image_url = EXCLUDED.image_url,
+                    brand = EXCLUDED.brand,
+                    category = EXCLUDED.category,
+                    color = EXCLUDED.color,
+                    condition = EXCLUDED.condition,
+                    size = EXCLUDED.size,
                     updated_at = NOW();
                 """,
-                (item['external_id'], item['title'], item['description'],
-                 item['price'], item['url'], item['image_url'])
+                (item['source'], item['external_id'], item['title'], item.get('description'),
+                 item.get('price'), item['url'], item['image_url'],
+                 item.get('brand', 'Unknown'), item.get('category', 'other'),
+                 item.get('color', 'unknown'), item.get('condition', 'Good'),
+                 item.get('size', 'M'))
             )
             saved += 1
         except Exception as e:

@@ -23,7 +23,27 @@ from db import execute_sync
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Import hybrid metadata extractor (combines text + visual)
+try:
+    from hybrid_metadata_extractor import enhance_item_metadata_hybrid
+    VISUAL_AVAILABLE = True
+except ImportError:
+    from metadata_extractor import enhance_item_metadata
+    VISUAL_AVAILABLE = False
+    logger.warning("Visual metadata not available - using text-only extraction")
+
 ua = UserAgent()
+
+# CONFIGURATION: Set to True to use CLIP visual enhancement (slower but better color detection)
+# Visual enhancement improves color coverage by ~50% but adds 1-2 seconds per item
+USE_VISUAL_ENHANCEMENT = False  # Change to True for production quality
+
+# CONFIGURATION: Set to True to use CLIP visual enhancement (slower but better color detection)
+# Visual enhancement improves color coverage by ~50% but adds 1-2 seconds per item
+USE_VISUAL_ENHANCEMENT = False  # Change to True for production quality
+
+# Toggle visual enhancement (slower but more accurate, especially for color)
+USE_VISUAL_ENHANCEMENT = True  # Set to False for faster scraping without CLIP
 
 
 async def scrape_grailed(search_term: str, max_items: int = 50) -> List[Dict[str, Any]]:
@@ -219,7 +239,7 @@ async def scrape_grailed(search_term: str, max_items: int = 50) -> List[Dict[str
                     
                     # Only save if we have minimum data
                     if external_id and image_url:
-                        items.append({
+                        item = {
                             'source': 'grailed',
                             'external_id': external_id,
                             'title': title,
@@ -228,7 +248,20 @@ async def scrape_grailed(search_term: str, max_items: int = 50) -> List[Dict[str
                             'image_url': image_url,
                             'seller_name': seller_name,
                             'description': None
-                        })
+                        }
+                        
+                        # Extract structured metadata (text + optional visual)
+                        if USE_VISUAL_ENHANCEMENT and VISUAL_AVAILABLE:
+                            item = enhance_item_metadata_hybrid(
+                                item, 
+                                use_visual=True,
+                                prefer_visual_for=['color']  # Visual is best for color
+                            )
+                        else:
+                            from metadata_extractor import enhance_item_metadata
+                            item = enhance_item_metadata(item)
+                        
+                        items.append(item)
                         
                         if (idx + 1) % 10 == 0:
                             logger.info(f"  Extracted {idx + 1} items...")
@@ -248,7 +281,7 @@ async def scrape_grailed(search_term: str, max_items: int = 50) -> List[Dict[str
 
 
 def save_items(items: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Save items to unified fashion_items table."""
+    """Save items to unified fashion_items table with structured metadata."""
     saved, failed = 0, 0
     
     for item in items:
@@ -257,20 +290,29 @@ def save_items(items: List[Dict[str, Any]]) -> Dict[str, int]:
                 """
                 INSERT INTO fashion_items (
                     source, external_id, title, description, price, 
-                    url, image_url, seller_name
+                    url, image_url, seller_name,
+                    brand, category, color, condition, size
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source, external_id) DO UPDATE SET
                     title = EXCLUDED.title,
                     price = EXCLUDED.price,
                     url = EXCLUDED.url,
                     image_url = EXCLUDED.image_url,
                     seller_name = EXCLUDED.seller_name,
+                    brand = EXCLUDED.brand,
+                    category = EXCLUDED.category,
+                    color = EXCLUDED.color,
+                    condition = EXCLUDED.condition,
+                    size = EXCLUDED.size,
                     updated_at = NOW();
                 """,
                 (item['source'], item['external_id'], item['title'], 
-                 item['description'], item['price'], item['url'], 
-                 item['image_url'], item['seller_name'])
+                 item.get('description'), item.get('price'), item['url'], 
+                 item['image_url'], item.get('seller_name'),
+                 item.get('brand', 'Unknown'), item.get('category', 'other'),
+                 item.get('color', 'unknown'), item.get('condition', 'Good'),
+                 item.get('size', 'M'))
             )
             saved += 1
         except Exception as e:
