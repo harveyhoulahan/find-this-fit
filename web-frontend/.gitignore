@@ -6,3 +6,16 @@ build
 *.log
 .env*.local
 .DS_Store
+
+# Backend files (not needed for frontend deployment)
+../backend
+../ingestion
+../database
+../miniapp
+
+# SQL backups
+*.sql
+
+# Python
+*.pyc
+__pycache__
