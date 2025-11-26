@@ -1,0 +1,28 @@
+# Depop Scraper Dependencies
+# Install with: pip install -r requirements.txt
+# After installing playwright, run: playwright install chromium
+
+# Browser automation for JavaScript rendering
+playwright==1.40.0
+
+# Anti-bot detection bypass
+playwright-stealth==1.0.6
+fake-useragent==1.4.0
+
+# Fallback HTML parsing (for simple scrapers)
+beautifulsoup4==4.12.3
+requests==2.31.0
+
+# Database connectivity
+psycopg2-binary==2.9.9
+
+# Task scheduling
+schedule==1.2.1
+
+# Embedding generation
+sentence-transformers==2.6.1
+torch>=2.0.0
+pillow==10.3.0
+
+# Data validation
+pydantic==2.6.4
